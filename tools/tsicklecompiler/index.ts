@@ -53,13 +53,35 @@ function getTsCompilerOptions(): ts.CompilerOptions {
     };
 }
 
+/**
+ * stripExternalName is used to remove external workspace identifiers from bazel
+ * paths.  This allows the filenames
+ * BAZEL_BIN/external/io_bazel_rules_closure+/google3/third_party/javascript/safevalues/builders/html_sanitizer/sanitizer_table/sanitizer_table.js
+ * and
+ * BAZEL_BIN/google3/third_party/javascript/safevalues/builders/html_sanitizer/sanitizer_table/sanitizer_table.js
+ * to generate the same moduleName.
+ *
+ * @param moduleName the module name to strip
+ * @returns 
+ */
+function stripExternalName(moduleName: string): string {
+    if (!moduleName.startsWith('external.')) {
+        return moduleName;
+    }
+    const parts = moduleName.split('.');
+    if (parts.length <= 2) {
+        return moduleName;
+    }
+    return parts.slice(2).join('.');
+}
+
 function run(
     options: ts.CompilerOptions,
     fileNames: string[],
     writeFile: ts.WriteFileCallback,
 ): tsickle.EmitResult {
-    // Use absolute paths to determine what files to process since files may be imported using
-    // relative or absolute paths
+    // Use absolute paths to determine what files to process since files may be
+    // imported using relative or absolute paths
     fileNames = fileNames.map(i => path.resolve(i));
 
     const compilerHost = ts.createCompilerHost(options);
@@ -73,9 +95,20 @@ function run(
             return !filesToProcess.has(path.resolve(fileName));
         },
         shouldIgnoreWarningsForPath: (fileName: string) => false,
-        pathToModuleName: (context, fileName) =>
-            tsickle.pathToModuleName(rootModulePath, context, fileName),
-        fileNameToModuleId: (fileName) => path.relative(rootModulePath, fileName),
+        pathToModuleName: (context, fileName) => {
+            const moduleName = stripExternalName(tsickle.pathToModuleName(rootModulePath, context, fileName));
+            if (DEBUG) {
+                console.log(`pathToModuleName: ${fileName} => ${moduleName}`);
+            }
+            return moduleName;
+        },
+        fileNameToModuleId: (fileName) => {
+            const moduleId = path.relative(rootModulePath, fileName);
+            if (DEBUG) {
+                console.log(`fileNameToModuleId: ${fileName} => ${moduleId}`);
+            }
+            return moduleId;
+        },
         googmodule: true,
         transformDecorators: true,
         transformTypesToClosure: true,
@@ -108,8 +141,6 @@ function run(
 async function main() {
     const execRoot = getExecRoot();
     const externsPath = getExternsPath();
-
-    await listExecrootFiles();
 
     const args = process.argv.slice(2);
     const inputFiles = getInputFiles(execRoot, args);
